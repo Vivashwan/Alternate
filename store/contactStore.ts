@@ -28,6 +28,8 @@ type Action = {
     updatedContact: Contact
   ) => Promise<boolean>;
   importContacts: () => Promise<number | boolean>;
+  /** Stores contacts whose numbers aren't saved yet; returns how many were added. */
+  mergeContacts: (incoming: Contact[]) => Promise<number>;
   exportContacts: () => Promise<boolean>;
   // Error clearing actions for better UX
   clearFetchError: () => void;
@@ -179,27 +181,7 @@ const useContactStoreBase = create<State & Action>((set, get) => ({
         return false;
       }
 
-      const contacts = get().contacts;
-      const existingNumbers = new Set(
-        contacts.map((contact) => contact.fullPhoneNumber)
-      );
-
-      const newContacts = importedContacts.filter(
-        (contact) => !existingNumbers.has(contact.fullPhoneNumber)
-      );
-
-      const success = await CallerIdModule.storeMultipleCallerInfo(newContacts);
-
-      if (success) {
-        // Refresh contacts list to show imported contacts
-        const updatedContacts = [...contacts, ...newContacts];
-        updatedContacts.sort((a, b) => a.name.localeCompare(b.name));
-        set({ contacts: updatedContacts });
-        return newContacts.length;
-      } else {
-        set({ importError: "Failed to import any contacts" });
-        return false;
-      }
+      return await get().mergeContacts(importedContacts);
     } catch (error) {
       console.error("Error importing contacts:", error);
       set({ importError: "Failed to import contacts from file" });
@@ -207,6 +189,28 @@ const useContactStoreBase = create<State & Action>((set, get) => ({
     } finally {
       set({ isImporting: false });
     }
+  },
+
+  mergeContacts: async (incoming) => {
+    const contacts = get().contacts;
+    const existingNumbers = new Set(contacts.map((contact) => contact.fullPhoneNumber));
+
+    // Also de-duplicate within the incoming list itself
+    const newContacts: Contact[] = [];
+    for (const contact of incoming) {
+      if (existingNumbers.has(contact.fullPhoneNumber)) continue;
+      existingNumbers.add(contact.fullPhoneNumber);
+      newContacts.push(contact);
+    }
+    if (newContacts.length === 0) return 0;
+
+    const success = await CallerIdModule.storeMultipleCallerInfo(newContacts);
+    if (!success) throw new Error("Failed to save contacts");
+
+    const updatedContacts = [...contacts, ...newContacts];
+    updatedContacts.sort((a, b) => a.name.localeCompare(b.name));
+    set({ contacts: updatedContacts });
+    return newContacts.length;
   },
 
   exportContacts: async () => {

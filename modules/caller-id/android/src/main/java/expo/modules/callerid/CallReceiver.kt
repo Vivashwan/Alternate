@@ -471,16 +471,11 @@ class CallReceiver : BroadcastReceiver() {
         return try {
             val telephonyManager =
                 context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-            val countryISO = telephonyManager?.networkCountryIso?.uppercase()
-                ?: telephonyManager?.simCountryIso?.uppercase()
-                ?: return phoneNumber
-            // val correctedPhoneNumber = PhoneNumberUtils.formatNumberToE164(phoneNumber, countryISO)
-
-            when {
-                phoneNumber.startsWith("+") -> phoneNumber.removePrefix("+")
-                phoneNumber.startsWith("0") && countryISO != "IT" -> phoneNumber.removePrefix("0")
-                else -> phoneNumber
-            }
+            val countryISO = PhoneNumberNormalizer.resolveCountry(
+                telephonyManager?.networkCountryIso,
+                telephonyManager?.simCountryIso
+            )
+            PhoneNumberNormalizer.normalize(phoneNumber, countryISO)
 
         } catch (e: Exception) {
             Log.e("CallReceiver", "Error getting corrected phone number", e)

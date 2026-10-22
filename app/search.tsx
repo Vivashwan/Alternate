@@ -1,7 +1,7 @@
 import { ContactItem } from "@/components/contact-item";
 import { EmptyContactsList } from "@/components/empty-contactsList";
 import { SectionHeader } from "@/components/section-header";
-import { useContactSearch } from "@/hooks/useContactSearch";
+import { useAdvancedContactSearch } from "@/hooks/useAdvancedContactSearch";
 import { getSectionedContacts } from "@/lib/avatar-utils";
 import { ListItem } from "@/lib/types";
 import useContactStore from "@/store/contactStore";
@@ -21,8 +21,8 @@ export default function SearchScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const contacts = useContactStore.use.contacts();
   
-  // Use the optimized search hook
-  const { searchResults, isSearching } = useContactSearch(contacts, searchQuery, 300);
+  // Linear search for small lists, bigram index above 1,000 contacts
+  const { searchResults, isSearching } = useAdvancedContactSearch(contacts, searchQuery, 300);
 
   // Create sectioned data for FlashList
   const sectionedData = getSectionedContacts(searchResults);

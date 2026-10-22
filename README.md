@@ -44,6 +44,8 @@
 
 A privacy-focused React Native app that helps you identify unknown callers without cluttering your device's main contact list. Perfect for temporary number storage when you need to know who's calling but don't want the number to appear in WhatsApp, Telegram, or other messaging apps.
 
+> This is an extended fork of [BioHazard786/Alternate](https://github.com/BioHazard786/Alternate). See [What's new in this fork](#whats-new-in-this-fork) for a test suite, bug fixes, faster search and an optional end-to-end encrypted cloud backup.
+
 ## Features
 
 - **Local Caller ID Detection**: Identify incoming calls using your private database
@@ -236,6 +238,34 @@ Please see the [CONTRIBUTING.md](CONTRIBUTING.md) file for detailed guidelines o
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=BioHazard786/Alternate&type=Date)](https://www.star-history.com/#BioHazard786/Alternate&Date)
+
+## What's new in this fork
+
+Additions by [Vivashwan Ghosh](https://github.com/Vivashwan).
+
+### 🧪 Testing (there were no tests before)
+- **Jest + React Native Testing Library** (`npm test`): 86 tests covering vCard import/export, search, phone formatting, the Zustand stores (contacts, passcode lockout, auto-lock), hooks, the backup crypto, the Redux auth flow and the backup settings UI.
+- **Kotlin JUnit tests** for the native caller-ID module's number matching, run through Gradle as the caller-id module's `testDebugUnitTest` task (see CI).
+- **GitHub Actions CI** (`.github/workflows/ci.yml`): typecheck + Jest with coverage, backup-server tests + build, and the Kotlin tests via Gradle. A clean checkout now typechecks with 0 errors (previously 2).
+
+### 🐛 Bugs found by the tests and fixed
+- **vCard round-trip** (`lib/vcf-utils.ts`):
+  - Exported photos re-imported as `data:image/image/jpeg`.
+  - Names, addresses and nicknames containing `;` were split apart, because structured values were unescaped *before* splitting.
+  - Android's own `N;CHARSET=UTF-8:` lines, contacts with only `FN`, lowercase property names, and emails/addresses without `PREF` were all ignored, so such contacts were silently dropped on import.
+- **Editing corrupted some numbers**: `trimDialCode` stripped leading digits matching the dial code from *national* numbers, so an Indian mobile like `91234 56789` was shown and re-saved as `234 56789`.
+- **Caller ID missed calls** (Kotlin): numbers like `0091…` or `+91 98765-43210` never matched, the `+` was kept when the country was unknown, and the SIM-country fallback never ran (`networkCountryIso` returns `""`, not `null`). This logic is now in a pure, unit-tested `PhoneNumberNormalizer`.
+- **Stale search results**: the large-list search hook built its index in an effect, so results could lag behind contact changes.
+
+### ⚡ Search performance
+`ContactSearchIndex` used to scan every key in the index on each keystroke. It now intersects the posting lists of the query's own bigrams. On 10,000 contacts (`npm run bench:search`, Node): **~8.7 ms → ~1.2 ms per search (≈7×)**, build 212 → 137 ms, index keys 33,645 → 300. A parity test checks it returns exactly what a full scan returns. The search screen now uses it automatically above 1,000 contacts.
+
+### ☁️ Optional end-to-end encrypted backup
+Off by default, consistent with the app's privacy focus. In **Settings → Encrypted Cloud Backup**:
+- **Encrypted on the device**: scrypt (N=2¹⁵) derives a key from a passphrase that never leaves the phone, then XChaCha20-Poly1305 (`@noble/ciphers`) encrypts the contacts. The KDF parameters are authenticated, so they can't be tampered with.
+- **Redux Toolkit + RTK Query** for server state, alongside the existing Zustand stores for local state. A re-auth base query refreshes expired access tokens with a **single-flight lock**, so concurrent 401s trigger one refresh.
+- **JWT auth**: the access token lives in memory only; the rotating refresh token is stored in the OS keystore via `expo-secure-store`.
+- **[`backup-server/`](backup-server/)**: a self-hostable Express + TypeScript + SQLite API (Docker image included) that only stores ciphertext. It has rotating refresh tokens with reuse detection, bcrypt, rate limiting and zod validation, with 28 Jest + Supertest tests.
 
 ## License
 

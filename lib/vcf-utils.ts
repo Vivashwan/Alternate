@@ -29,7 +29,7 @@ export function contactToVCF(contact: Contact): string {
 	const vcfLines = [
 		"BEGIN:VCARD",
 		"VERSION:2.1",
-		`N:;${name};;${escapeVCFValue(contact.prefix || "")};${escapeVCFValue(
+		`N:;${escapeVCFValue(name)};;${escapeVCFValue(contact.prefix || "")};${escapeVCFValue(
 			contact.suffix || "",
 		)}`,
 		`FN:${escapeVCFValue(getFormattedName(contact))}`,
@@ -84,13 +84,13 @@ export function contactToVCF(contact: Contact): string {
 			? contact.photo.split(",")[1]
 			: contact.photo;
 
-		// Get MIME type from data URI or default to JPEG
-		const mimeType = contact.photo.startsWith("data:image/")
-			? contact.photo.split(";")[0].replace("data:", "")
-			: "image/jpeg";
+		// vCard expects the image subtype only (TYPE=JPEG), not the full MIME type
+		const imageType = contact.photo.startsWith("data:image/")
+			? contact.photo.split(";")[0].replace("data:image/", "")
+			: "jpeg";
 
 		vcfLines.push(
-			`PHOTO;ENCODING=BASE64;TYPE=${mimeType.toUpperCase()}:${base64Data}`,
+			`PHOTO;ENCODING=BASE64;TYPE=${imageType.toUpperCase()}:${base64Data}`,
 		);
 	}
 
@@ -115,6 +115,34 @@ function unescapeVCFValue(value: string): string {
 		.replace(/\\,/g, ",")
 		.replace(/\\;/g, ";")
 		.replace(/\\\\/g, "\\");
+}
+
+/**
+ * Splits a structured value (N, ADR, ...) on unescaped semicolons, then unescapes
+ * each component. Unescaping first would turn "\;" into a separator and split
+ * values such as "Flat 2; MG Road" in the wrong place.
+ */
+function splitStructuredValue(rawValue: string): string[] {
+	return rawValue.split(/(?<!\\);/).map(unescapeVCFValue);
+}
+
+/**
+ * Splits "NAME;PARAM=X;PARAM2:value" into an upper-case property name, its
+ * upper-case parameter string, and the raw (still escaped) value.
+ */
+function parseContentLine(
+	line: string,
+): { property: string; params: string; rawValue: string } | null {
+	const colonIndex = line.indexOf(":");
+	if (colonIndex === -1) return null;
+
+	const nameAndParams = line.substring(0, colonIndex).toUpperCase();
+	const separator = nameAndParams.indexOf(";");
+	return {
+		property: separator === -1 ? nameAndParams : nameAndParams.substring(0, separator),
+		params: separator === -1 ? "" : nameAndParams.substring(separator + 1),
+		rawValue: line.substring(colonIndex + 1),
+	};
 }
 
 /**
@@ -162,7 +190,7 @@ export function parseVCF(vcfContent: string): Contact[] {
 		.replace(/\r\n?/g, "\n")
 		.replace(/\n[ \t]/g, "");
 
-	const vcards = processedContent.split("BEGIN:VCARD");
+	const vcards = processedContent.split(/BEGIN:VCARD/i);
 
 	for (const vcard of vcards) {
 		if (!vcard.trim()) continue;
@@ -187,22 +215,28 @@ export function parseVCF(vcfContent: string): Contact[] {
 			photo: "",
 		};
 
+		// Fallbacks used when no N field / no PREF-marked email or address exists
+		let formattedName = "";
+		let firstEmail = "";
+		let firstLocation = "";
+
 		for (const line of lines) {
-			const colonIndex = line.indexOf(":");
-			if (colonIndex === -1) continue;
+			const parsed = parseContentLine(line);
+			if (!parsed) continue;
 
-			const field = line.substring(0, colonIndex);
-			const value = unescapeVCFValue(line.substring(colonIndex + 1));
+			const { property, params, rawValue } = parsed;
+			const value = unescapeVCFValue(rawValue);
+			const isPreferred = params.includes("PREF");
 
-			switch (true) {
-				case field === "N": {
+			switch (property) {
+				case "N": {
 					const [
 						lastName = "",
 						firstName = "",
 						middleName = "",
 						prefix = "",
 						suffix = "",
-					] = value.split(";");
+					] = splitStructuredValue(rawValue);
 					contact.prefix = prefix;
 					contact.suffix = suffix;
 					if (firstName || lastName || middleName) {
@@ -213,38 +247,43 @@ export function parseVCF(vcfContent: string): Contact[] {
 					break;
 				}
 
-				case field.startsWith("TEL") && !contact.fullPhoneNumber: {
+				case "FN":
+					formattedName = value;
+					break;
+
+				case "TEL": {
+					if (contact.fullPhoneNumber) break;
 					const phone = parsePhoneNumber(value, countryCode);
-					if (!phone) break;
-					Object.assign(contact, phone);
+					if (phone) Object.assign(contact, phone);
 					break;
 				}
 
-				case field.startsWith("EMAIL") &&
-					!contact.email &&
-					field.includes("PREF"):
-					contact.email = value;
+				case "EMAIL":
+					if (isPreferred && !contact.email) contact.email = value;
+					else if (!firstEmail) firstEmail = value;
 					break;
 
-				case field.startsWith("ADR") && field.includes("PREF"): {
-					const addressParts = value.split(";");
-					contact.location = addressParts[4] || addressParts[3] || "";
+				case "ADR": {
+					const addressParts = splitStructuredValue(rawValue);
+					const location = addressParts[4] || addressParts[3] || "";
+					if (isPreferred) contact.location = location;
+					else if (!firstLocation) firstLocation = location;
 					break;
 				}
 
-				case field === "TITLE":
+				case "TITLE":
 					contact.appointment = value;
 					break;
 
-				case field === "URL":
+				case "URL":
 					contact.website = value;
 					break;
 
-				case field === "NOTE":
+				case "NOTE":
 					contact.notes = value;
 					break;
 
-				case field === "BDAY": {
+				case "BDAY": {
 					// Check if the value matches the accepted formats
 					const validDateFormat = /^\d{4}-\d{2}-\d{2}$/; // YYYY-MM-DD
 					const validPartialDateFormat = /^--\d{2}-\d{2}$/; // --MM-DD
@@ -258,27 +297,33 @@ export function parseVCF(vcfContent: string): Contact[] {
 					break;
 				}
 
-				case field === "X-ANDROID-CUSTOM" &&
-					value.startsWith("vnd.android.cursor.item/nickname;"):
-					contact.nickname = value.split(";")[1] || "";
+				case "X-ANDROID-CUSTOM": {
+					const [mimeType, data = ""] = splitStructuredValue(rawValue);
+					if (mimeType === "vnd.android.cursor.item/nickname") {
+						contact.nickname = data;
+					}
 					break;
+				}
 
-				case field.startsWith("PHOTO"):
-					// Handle photo field with base64 encoding
-					if (field.includes("ENCODING=BASE64") || field.includes("BASE64")) {
-						// Extract MIME type from field parameters
-						const typeMatch = field.match(/TYPE=([^;:]+)/i);
-						const mimeType = typeMatch ? typeMatch[1].toLowerCase() : "jpeg";
+				case "PHOTO":
+					// Handle photo field with base64 encoding (vCard 2.1 BASE64, 3.0 ENCODING=B)
+					if (params.includes("BASE64") || params.includes("ENCODING=B")) {
+						// TYPE may be "JPEG" or a full MIME type such as "image/jpeg"
+						const typeMatch = params.match(/TYPE=(?:IMAGE\/)?([^;:]+)/);
+						const imageType = typeMatch ? typeMatch[1].toLowerCase() : "jpeg";
 
 						// Clean the base64 data (remove any whitespace/newlines)
-						const cleanBase64 = value.replace(/\s/g, "");
+						const cleanBase64 = rawValue.replace(/\s/g, "");
 
-						// Create data URI
-						contact.photo = `data:image/${mimeType};base64,${cleanBase64}`;
+						contact.photo = `data:image/${imageType};base64,${cleanBase64}`;
 					}
 					break;
 			}
 		}
+
+		contact.name ||= formattedName;
+		contact.email ||= firstEmail;
+		contact.location ||= firstLocation;
 
 		if (contact.name && contact.fullPhoneNumber) {
 			contacts.push(contact as Contact);

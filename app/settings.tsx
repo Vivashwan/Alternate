@@ -1,3 +1,4 @@
+import { EncryptedBackupSection } from "@/components/encrypted-backup-section";
 import { MaterialSwitchListItem } from "@/components/material-switch-list-item";
 import Material3Avatar from "@/components/material3-avatar";
 import PasscodeSetupModal from "@/components/passcode-setup-modal";
@@ -577,6 +578,8 @@ export default function SettingsScreen() {
           )}
         </View>
       </View>
+
+      <EncryptedBackupSection onMessage={showDialog} />
 
       {/* Developer and Repo Information */}
       <View style={{ gap: 2, marginTop: 24 }}>

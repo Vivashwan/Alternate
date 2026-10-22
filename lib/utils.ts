@@ -5,23 +5,25 @@ import {
 import { getCountryByCode } from "./countries";
 import type { Contact } from "./types";
 
+/**
+ * Strips an explicit international prefix ("+91..." or "0091...") from a number.
+ * Bare digits are never trimmed: national numbers can legitimately start with the
+ * same digits as the dial code (e.g. Indian mobiles beginning with 91).
+ */
 export function trimDialCode(phoneNumber: string, countryCode: string): string {
-	// Get the country by code
 	const country = getCountryByCode(countryCode);
-
 	if (!country) {
 		return phoneNumber; // If no country found, return original number
 	}
 
-	// Remove the dial code from the phone number
-	const dialCode = country.dialCode;
-
-	// Check if the phone number starts with the dial code
-	if (phoneNumber.startsWith(dialCode)) {
-		return phoneNumber.slice(dialCode.length).trim(); // Return number without dial code
+	const number = phoneNumber.trim();
+	for (const prefix of [`+${country.dialCode}`, `00${country.dialCode}`]) {
+		if (number.startsWith(prefix)) {
+			return number.slice(prefix.length).trim();
+		}
 	}
 
-	return phoneNumber; // Return original number if it doesn't start with dial code
+	return phoneNumber;
 }
 
 export function getFormattedPhoneNumber(contact: Contact): string {

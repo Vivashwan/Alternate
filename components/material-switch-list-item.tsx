@@ -304,7 +304,8 @@ export const MaterialSwitchListItem = ({
   return (
     <List.Item
       left={() => (
-        <List.Icon style={{ paddingRight: leftIcon ? 8 : 0 }} icon={leftIcon} />
+        // No icon renders an empty, zero-padded slot; keeps the original layout
+        <List.Icon style={{ paddingRight: leftIcon ? 8 : 0 }} icon={leftIcon as IconSource} />
       )}
       rippleColor={rippleColor}
       titleStyle={titleStyle}

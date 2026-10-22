@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: App · typecheck + Jest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:coverage -- --ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-coverage
+          path: coverage/
+
+  backup-server:
+    name: Backup server · typecheck + Jest + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backup-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backup-server/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test -- --ci
+      - run: npm run build
+
+  android-unit-tests:
+    name: Native module · Kotlin JUnit (Gradle)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci
+      - name: Run caller-id module unit tests
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          # Expo autolinking names the local module's Gradle project; look it up rather than hard-code it
+          PROJECT=$(./gradlew -q projects | grep -o "':[^']*caller-id[^']*'" | head -1 | tr -d "'")
+          echo "Testing Gradle project ${PROJECT}"
+          ./gradlew "${PROJECT}:testDebugUnitTest"
